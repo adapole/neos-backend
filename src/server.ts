@@ -201,7 +201,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 				walletConnector.createSession().then(() => {
 					// get uri for QR Code modal
 					const uri = walletConnector.uri;
-					ws.send(uri);
+					ws.send(encodeURIComponent(uri));
 					// display QR Code modal
 				});
 			}
