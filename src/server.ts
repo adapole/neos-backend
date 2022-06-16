@@ -1,5 +1,5 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
-import axios from 'axios';
+//import axios from 'axios';
 import * as fs from 'fs';
 import {
 	apiGetAccountAssets,
@@ -11,7 +11,7 @@ import {
 require('dotenv').config();
 import WebSocket from 'ws';
 import NodeWalletConnect from '@walletconnect/node';
-import QRCodeModal from 'algorand-walletconnect-qrcode-modal';
+//import QRCodeModal from 'algorand-walletconnect-qrcode-modal';
 import { IInternalEvent } from '@walletconnect/types';
 import algosdk, { Transaction, TransactionSigner } from 'algosdk';
 import { SignTxnParams } from './types';
@@ -194,55 +194,60 @@ wss.on('connection', function connection(ws: WebSocket) {
 		if (msg === 'wc') {
 			console.log('ping');
 			ws.send('pong');
+			try {
+				// Check if connection is already established
+				if (!walletConnector.connected) {
+					// create new session
+					walletConnector.createSession().then(() => {
+						// get uri for QR Code modal
+						const uri = walletConnector.uri;
+						ws.send(encodeURIComponent(uri));
+						// display QR Code modal
+					});
+				}
+				// Subscribe to connection events
+				walletConnector.on('connect', (error, payload) => {
+					if (error) {
+						throw error;
+					}
 
-			// Check if connection is already established
-			if (!walletConnector.connected) {
-				// create new session
-				walletConnector.createSession().then(() => {
-					// get uri for QR Code modal
-					const uri = walletConnector.uri;
-					ws.send(encodeURIComponent(uri));
-					// display QR Code modal
+					// Close QR Code Modal
+					const { accounts } = payload.params[0];
+					const address = accounts[0];
+					console.log(`onConnect: ${address}`);
+					ws.send('address: ' + address);
 				});
+
+				walletConnector.on('session_update', (error, payload) => {
+					if (error) {
+						throw error;
+					}
+
+					// Get updated accounts
+					const { accounts } = payload.params[0];
+					onSessionUpdate(accounts);
+				});
+
+				walletConnector.on('disconnect', (error, payload) => {
+					if (error) {
+						throw error;
+					}
+					// Delete walletConnector
+					if (walletConnector) {
+						//walletConnector.killSession();
+						walletConnector.off;
+					}
+					walletConnector.connected = false;
+				});
+			} catch (error) {
+				console.error(error);
 			}
-			// Subscribe to connection events
-			walletConnector.on('connect', (error, payload) => {
-				if (error) {
-					throw error;
-				}
-
-				// Close QR Code Modal
-				const { accounts } = payload.params[0];
-				const address = accounts[0];
-				console.log(`onConnect: ${address}`);
-				ws.send('address: ' + address);
-			});
-
-			walletConnector.on('session_update', (error, payload) => {
-				if (error) {
-					throw error;
-				}
-
-				// Get updated accounts
-				const { accounts } = payload.params[0];
-				onSessionUpdate(accounts);
-			});
-
-			walletConnector.on('disconnect', (error, payload) => {
-				if (error) {
-					throw error;
-				}
-				// Delete walletConnector
-				if (walletConnector) {
-					walletConnector.killSession();
-				}
-				walletConnector.connected = false;
-			});
-
 			//await wcsignATC(walletConnector,address)
 		} else if (msg === 'sign') {
 			if (walletConnector.connected) {
-				await wcsignATC(walletConnector, walletConnector.accounts[0]);
+				try {
+					await wcsignATC(walletConnector, walletConnector.accounts[0]);
+				} catch (error) {}
 			}
 		}
 
