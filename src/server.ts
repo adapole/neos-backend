@@ -20,6 +20,12 @@ import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
+(BigInt.prototype as any).toJSON = function () {
+	return this.toString();
+};
+app.use(express.json());
+app.use(express.static(__dirname + '/'));
+
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server: server });
 const onConnect = async (payload: IInternalEvent) => {
@@ -258,10 +264,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 		console.log('disconnected');
 	});
 });
-app.use(express.json());
-(BigInt.prototype as any).toJSON = function () {
-	return this.toString();
-};
+
 app.get('/', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		//const { data } = await axios.get(`https://api.chucknorris.io/jokes/random`);

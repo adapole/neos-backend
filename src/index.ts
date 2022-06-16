@@ -7,6 +7,7 @@ import { IInternalEvent } from '@walletconnect/types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { SignTxnParams } from './types';
 import * as fs from 'fs';
+require('dotenv').config();
 
 // Create connector
 
@@ -28,7 +29,7 @@ const baseServer = 'https://testnet-algorand.api.purestake.io/ps2';
 const baseServerIndexer = 'https://testnet-algorand.api.purestake.io/idx2';
 const pport = '';
 const token = {
-	'X-API-Key': '8YzdhUoWPD7yImg6aDJHr3THI9aA6D68tHYnL0wf',
+	'X-API-Key': process.env.PURESTAKE_API ?? '',
 };
 
 const mainNetClient = new algosdk.Algodv2('', 'https://algoexplorerapi.io', '');
