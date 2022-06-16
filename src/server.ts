@@ -11,7 +11,6 @@ import {
 require('dotenv').config();
 import WebSocket from 'ws';
 import NodeWalletConnect from '@walletconnect/node';
-//import QRCodeModal from 'algorand-walletconnect-qrcode-modal';
 import { IInternalEvent } from '@walletconnect/types';
 import algosdk, { Transaction, TransactionSigner } from 'algosdk';
 import { SignTxnParams } from './types';
