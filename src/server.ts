@@ -196,9 +196,9 @@ wss.on('connection', function connection(ws: WebSocket) {
 	);
 	ws.on('message', async function incoming(message: string) {
 		const msg = message.toString();
-		if (msg === 'wc') {
-			console.log('ping');
-			ws.send('pong');
+		if (msg === 'i') {
+			ws.send('');
+		} else if (msg === 'wc') {
 			try {
 				// Check if connection is already established
 				if (!walletConnector.connected) {
@@ -220,7 +220,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 					const { accounts } = payload.params[0];
 					const address = accounts[0];
 					console.log(`onConnect: ${address}`);
-					ws.send('address: ' + address);
+					ws.send(address);
 				});
 
 				walletConnector.on('session_update', (error, payload) => {
@@ -247,7 +247,6 @@ wss.on('connection', function connection(ws: WebSocket) {
 			} catch (error) {
 				console.error(error);
 			}
-			//await wcsignATC(walletConnector,address)
 		} else if (msg === 'sign') {
 			if (walletConnector.connected) {
 				try {
@@ -256,8 +255,8 @@ wss.on('connection', function connection(ws: WebSocket) {
 			}
 		}
 
-		console.log('recieved: %s', message);
-		ws.send('Got message: ' + message);
+		//console.log('recieved: %s', message);
+		//ws.send('Got message: ' + message);
 	});
 	ws.on('close', function close() {
 		console.log('disconnected');
