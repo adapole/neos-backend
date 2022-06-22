@@ -197,7 +197,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 	ws.on('message', async function incoming(message: string) {
 		const msg = message.toString();
 		if (msg === 'i') {
-			ws.send('');
+			//ws.send('');
 		} else if (msg === 'wc') {
 			try {
 				// Check if connection is already established
@@ -206,8 +206,8 @@ wss.on('connection', function connection(ws: WebSocket) {
 					walletConnector.createSession().then(() => {
 						// get uri for QR Code modal
 						const uri = walletConnector.uri;
-						ws.send(encodeURIComponent(uri));
-						// display QR Code modal
+						ws.send(uri);
+						// encodeURIComponent
 					});
 				}
 				// Subscribe to connection events
