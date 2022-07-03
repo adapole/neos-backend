@@ -5,17 +5,20 @@ import {
 	apiGetAccountAssets,
 	apiGetTxnParams,
 	ChainType,
-	signATC,
 	testNetClientalgod,
 } from '.';
 require('dotenv').config();
 import WebSocket from 'ws';
 import NodeWalletConnect from '@walletconnect/node';
 import { IInternalEvent } from '@walletconnect/types';
-import algosdk, { Transaction, TransactionSigner } from 'algosdk';
+import algosdk, {
+	OnApplicationComplete,
+	Transaction,
+	TransactionSigner,
+} from 'algosdk';
 import { SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
-
+import { create } from 'ipfs-http-client';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -27,6 +30,26 @@ app.use(express.static(__dirname + '/'));
 
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server: server });
+const ipfs = create({
+	host: 'ipfs.infura.io',
+	port: 5001,
+	protocol: 'https',
+});
+
+/**
+ * Returns Uint8array of LogicSig from ipfs, throw error
+ * @param ipfsPath hash string of ipfs path
+ */
+const borrowGetLogic = async (ipfsPath: string): Promise<Uint8Array> => {
+	const chunks = [];
+	for await (const chunk of ipfs.cat(ipfsPath)) {
+		chunks.push(chunk);
+	}
+	//console.log(chunks);
+	//setBorrowLogicSig(chunks[0]);
+	return chunks[0];
+};
+
 const onConnect = async (payload: IInternalEvent) => {
 	const { accounts } = payload.params[0];
 	const address = accounts[0];
@@ -81,20 +104,11 @@ async function walletConnectSigner(
 	// sign transaction
 	const requestParams: SignTxnParams = [txnsToSign];
 
-	/* return txns.map((txn) => {
-		return {
-			txID: txn.txID(),
-			blob: new Uint8Array(),
-		};
-	}); */
-
 	const request = formatJsonRpcRequest('algo_signTxn', requestParams);
 	//console.log('Request param:', request);
-	const result: Array<string | null> = await connector.sendCustomRequest(
-		request
-	);
+	const result: string[] = await connector.sendCustomRequest(request);
 
-	console.log('Raw response:', result);
+	//console.log('Raw response:', result);
 	return result.map((element, idx) => {
 		return element
 			? {
@@ -128,7 +142,115 @@ async function getContractAPI(): Promise<algosdk.ABIContract> {
 	return new algosdk.ABIContract(JSON.parse(buff.toString()));
 }
 
-async function wcsignATC(connector: NodeWalletConnect, address: string) {
+async function wcborrow(
+	connector: NodeWalletConnect,
+	address: string,
+	xid: number,
+	loanamt: number,
+	collateralamt: number
+) {
+	const suggested = await apiGetTxnParams(ChainType.TestNet);
+	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+	const contract = await getContractAPI();
+
+	//console.log(contract);
+	// Utility function to return an ABIMethod by its name
+	function getMethodByName(name: string): algosdk.ABIMethod {
+		const m = contract.methods.find((mt: algosdk.ABIMethod) => {
+			return mt.name == name;
+		});
+		if (m === undefined) throw Error('Method undefined: ' + name);
+		return m;
+	}
+	const signer = getSignerWC(connector, address);
+	suggested.flatFee = true;
+	suggested.fee = 4000;
+	// We initialize the common parameters here, they'll be passed to all the transactions
+	// since they happen to be the same
+	const commonParams = {
+		appID: contract.networks['default'].appID,
+		sender: address,
+		suggestedParams: suggested,
+		//onComplete: OnApplicationComplete.NoOpOC,
+		signer: signer,
+	};
+	const comp = new algosdk.AtomicTransactionComposer();
+	//'QmNU1gEgZKnMAL9gEWdWXAmuaDguUFhbGYqLw4p1iCGrSc' //'QmRY9HMe2fb6HAJhywnTTYQamLxQV9qJbjVeK7Wa314TeR' 'QmdvvuGptFDAoB6Vf9eJcPeQTKi2MjA3AnEv47syNPz6CS'
+	const borrowLogic = await borrowGetLogic(
+		'QmXJWc7jeSJ7F2Cc4cm6SSYdMnAiCG4M4gfaiQXvDbdAbL' //'QmWFR6jSCaqfxjVK9S3PNNyyCh35kYx5sGgwi7eZAogpD9' //'QmciTBaxmKRF9fHjJP7q83f9nvBPf757ocbyEvTnrMttyM' //'QmdHj2MHo6Evzjif3RhVCoMV2RMqkxvcZqLP946cN77ZEN' //'QmfWfsjuay1tJXJsNNzhZqgTqSj3CtnMGtu7NK3bVtdh6k' //'QmPubkotHM9iArEoRfntSB6VwbYBLz19c1uxmTp4FYJzbk' //'QmaDABqWt3iKso3YjxRRBCj4HJqqeerAvrBeLTMTTz7VzY' //'QmbbDFKzSAbBpbmhn9b31msyMz6vnZ3ZvKW9ebBuUDCyK9' //'QmYoFqC84dd7K5nCu5XGyWGyqDwEs7Aho8j46wqeGRfuJq' //'QmaGYNdQaj2cygMxxDQqJie3vfAJzCa1VBstReKY1ZuYjK'
+	);
+	//console.log(borrowLogic);
+	const borrowLogicSig = borrowLogic;
+	const addressLogicSig =
+		'KLNYAXOWHKBHUKVDDWFOSXNHYDS45M3KJW4HYJ6GOQB4LGAH4LJF57QVZI';
+	const amountborrowing = 1000000;
+	const xids = [xid];
+	const camt = [collateralamt];
+	const lamt = [loanamt];
+	const USDC = 10458941;
+	const DUSD = 84436770;
+	const MNG = 84436122;
+	const LQT = 84436752;
+	/* let lsiga = algosdk.logicSigFromByte(borrowLogicSig);
+	console.log(lsiga);
+	console.log(lsiga.toByte()); */
+
+	console.log('Logic sig here');
+	let lsig = algosdk.LogicSigAccount.fromByte(borrowLogicSig);
+	console.log(lsig.verify());
+	//console.log(lsig.toByte());
+	suggestedParams.flatFee = true;
+	suggestedParams.fee = 0;
+	const ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: addressLogicSig, //Lender address
+		to: address,
+		amount: amountborrowing,
+		assetIndex: USDC,
+		suggestedParams,
+	});
+
+	// Construct TransactionWithSigner
+	const tws = {
+		txn: ptxn,
+		signer: algosdk.makeLogicSigAccountTransactionSigner(lsig),
+	};
+
+	comp.addMethodCall({
+		method: getMethodByName('borrow'),
+		methodArgs: [
+			tws,
+			xids,
+			camt,
+			lamt,
+			addressLogicSig,
+			xids[0],
+			DUSD,
+			MNG,
+			LQT,
+		],
+		...commonParams,
+	});
+	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
+
+	//comp.addTransaction({ txn: pay_txn, signer: sw.getSigner() });
+
+	// This is not necessary to call but it is helpful for debugging
+	// to see what is being sent to the network
+	const g = comp.buildGroup();
+	console.log(g);
+	for (const x in g) {
+		//console.log(g[x].txn.appArgs);
+	}
+
+	const result = await comp.execute(testNetClientalgod, 2);
+	console.log(result);
+	for (const idx in result.methodResults) {
+		//console.log(result.methodResults[idx]);
+	}
+	return result;
+}
+
+async function optinD4T(connector: NodeWalletConnect, address: string) {
 	const suggested = await apiGetTxnParams(ChainType.TestNet);
 	const contract = await getContractAPI();
 
@@ -141,21 +263,23 @@ async function wcsignATC(connector: NodeWalletConnect, address: string) {
 		if (m === undefined) throw Error('Method undefined: ' + name);
 		return m;
 	}
-
+	const signer = getSignerWC(connector, address);
 	// We initialize the common parameters here, they'll be passed to all the transactions
 	// since they happen to be the same
 	const commonParams = {
 		appID: contract.networks['default'].appID,
 		sender: address,
 		suggestedParams: suggested,
-		signer: getSignerWC(connector, address),
+		onComplete: OnApplicationComplete.OptInOC,
+		signer: signer,
 	};
 	const comp = new algosdk.AtomicTransactionComposer();
 
-	// Simple ABI Calls with standard arguments, return type
+	const MNG = 84436122;
+
 	comp.addMethodCall({
-		method: getMethodByName('test'),
-		methodArgs: ['ping'],
+		method: getMethodByName('optin'),
+		methodArgs: [MNG],
 		...commonParams,
 	});
 	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
@@ -166,16 +290,173 @@ async function wcsignATC(connector: NodeWalletConnect, address: string) {
 	// to see what is being sent to the network
 	const g = comp.buildGroup();
 	console.log(g);
-	for (const x in g) {
-		console.log(g[x].txn.appArgs);
-	}
 
 	const result = await comp.execute(testNetClientalgod, 2);
 	console.log(result);
-	for (const idx in result.methodResults) {
-		console.log(result.methodResults[idx]);
-	}
+
 	return result;
+}
+
+async function repay(
+	connector: NodeWalletConnect,
+	address: string,
+	xid: number,
+	repayamt: number
+) {
+	const suggested = await apiGetTxnParams(ChainType.TestNet);
+	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+	const contract = await getContractAPI();
+
+	console.log(contract);
+	// Utility function to return an ABIMethod by its name
+	function getMethodByName(name: string): algosdk.ABIMethod {
+		const m = contract.methods.find((mt: algosdk.ABIMethod) => {
+			return mt.name == name;
+		});
+		if (m === undefined) throw Error('Method undefined: ' + name);
+		return m;
+	}
+	const signer = getSignerWC(connector, address);
+	suggested.flatFee = true;
+	suggested.fee = 3000;
+	// We initialize the common parameters here, they'll be passed to all the transactions
+	// since they happen to be the same
+	const commonParams = {
+		appID: contract.networks['default'].appID,
+		sender: address,
+		suggestedParams: suggested,
+		signer: signer,
+	};
+	const comp = new algosdk.AtomicTransactionComposer();
+
+	const APP_ID = contract.networks['default'].appID;
+	const xids = [xid];
+	const ramt = [repayamt];
+	const USDC = 10458941;
+	const MNG = 84436122;
+	const LQT = 84436752;
+	suggestedParams.flatFee = true;
+	suggestedParams.fee = 0;
+	const ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: address,
+		to: algosdk.getApplicationAddress(APP_ID),
+		amount: ramt[0],
+		assetIndex: USDC,
+		suggestedParams,
+	});
+	const tws = {
+		txn: ptxn,
+		signer: signer,
+	};
+
+	comp.addMethodCall({
+		method: getMethodByName('repay'),
+		methodArgs: [tws, xids, ramt, xids[0], MNG, LQT],
+		...commonParams,
+	});
+	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
+
+	//comp.addTransaction({ txn: pay_txn, signer: sw.getSigner() });
+
+	// This is not necessary to call but it is helpful for debugging
+	// to see what is being sent to the network
+	const g = comp.buildGroup();
+	console.log(g);
+
+	const result = await comp.execute(testNetClientalgod, 2);
+	console.log(result);
+
+	return result;
+}
+
+async function claim(
+	connector: NodeWalletConnect,
+	address: string,
+	xid: number,
+	claimamt: number
+) {
+	const suggested = await apiGetTxnParams(ChainType.TestNet);
+	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+	const contract = await getContractAPI();
+
+	console.log(contract);
+	// Utility function to return an ABIMethod by its name
+	function getMethodByName(name: string): algosdk.ABIMethod {
+		const m = contract.methods.find((mt: algosdk.ABIMethod) => {
+			return mt.name == name;
+		});
+		if (m === undefined) throw Error('Method undefined: ' + name);
+		return m;
+	}
+	const signer = getSignerWC(connector, address);
+	suggested.flatFee = true;
+	suggested.fee = 3000;
+	// We initialize the common parameters here, they'll be passed to all the transactions
+	// since they happen to be the same
+	const commonParams = {
+		appID: contract.networks['default'].appID,
+		sender: address,
+		suggestedParams: suggested,
+		signer: signer,
+	};
+	const comp = new algosdk.AtomicTransactionComposer();
+
+	const APP_ID = contract.networks['default'].appID;
+	const xids = [xid];
+	const claamt = [claimamt];
+	const USDC = 10458941;
+	const DUSD = 84436770;
+	const MNG = 84436122;
+	const LQT = 84436752;
+	suggestedParams.flatFee = true;
+	suggestedParams.fee = 0;
+	const ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: address,
+		to: algosdk.getApplicationAddress(APP_ID),
+		amount: claamt[0],
+		assetIndex: DUSD,
+		suggestedParams,
+	});
+	const tws = {
+		txn: ptxn,
+		signer: signer,
+	};
+
+	comp.addMethodCall({
+		method: getMethodByName('claim'),
+		methodArgs: [tws, USDC, MNG],
+		...commonParams,
+	});
+	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
+
+	//comp.addTransaction({ txn: pay_txn, signer: sw.getSigner() });
+
+	// This is not necessary to call but it is helpful for debugging
+	// to see what is being sent to the network
+	const g = comp.buildGroup();
+	console.log(g);
+
+	const result = await comp.execute(testNetClientalgod, 2);
+	console.log(result);
+
+	return result;
+}
+// create a json making function from a string input of the form:
+// borrow,xid,lamt,camt
+// the json will be {type: 'borrow', values:{ xid: xid, lamt: lamt, camt: camt}}
+function makeJsonFromString(str: string) {
+	const arr = str.split(',');
+	if (arr.length < 1) return { type: str, values: {} };
+	const type = arr[0];
+	const xid = arr[1];
+	const amt = arr[2];
+	let camt = '';
+	//if(arr.length > 3) {}
+	if (type === 'borrow') {
+		camt = arr[3];
+	}
+
+	return { type: type, values: { xid, amt, camt } };
 }
 
 wss.on('connection', function connection(ws: WebSocket) {
@@ -187,17 +468,17 @@ wss.on('connection', function connection(ws: WebSocket) {
 		},
 		{
 			clientMeta: {
-				description: 'WalletConnect from NodeJS Client',
-				url: 'https://nodejs.org/en/',
+				description: 'WalletConnect for DeFi4NFT; to Neos metaverse connection',
+				url: 'https://defi4nft.herokuapp.com',
 				icons: ['https://nodejs.org/static/images/logo.svg'],
-				name: 'DeFi4 NFT-Neos',
+				name: 'DeFi4NFT | Neos',
 			},
 		}
 	);
+
 	ws.on('message', async function incoming(message: string) {
 		const msg = message.toString();
 		if (msg === 'i') {
-			//ws.send('');
 		} else if (msg === 'wc') {
 			try {
 				// Check if connection is already established
@@ -247,16 +528,86 @@ wss.on('connection', function connection(ws: WebSocket) {
 			} catch (error) {
 				console.error(error);
 			}
-		} else if (msg === 'sign') {
+		} else if (msg === 'optin') {
 			if (walletConnector.connected) {
+				console.log('optin');
 				try {
-					await wcsignATC(walletConnector, walletConnector.accounts[0]);
-				} catch (error) {}
+					await optinD4T(walletConnector, walletConnector.accounts[0]);
+				} catch (error) {
+					console.log(error);
+				}
 			}
+		} else if (msg === 'close') {
+			console.log('closing...');
+			ws.close();
 		}
-
-		//console.log('recieved: %s', message);
-		//ws.send('Got message: ' + message);
+		try {
+			if (msg !== 'i' && msg !== 'wc') {
+				const jformat = makeJsonFromString(msg);
+				console.log(jformat);
+				if (jformat.type === 'borrow') {
+					if (walletConnector.connected) {
+						console.log('borrow');
+						try {
+							//check if xid, amt and camt are present
+							if (
+								jformat.values.xid &&
+								jformat.values.amt &&
+								jformat.values.camt
+							) {
+								const xid: number = Number(jformat.values.xid);
+								const loanamt: number = Number(jformat.values.amt);
+								const collateralamt: number = Number(jformat.values.camt);
+								await wcborrow(
+									walletConnector,
+									walletConnector.accounts[0],
+									xid,
+									loanamt,
+									collateralamt
+								);
+							}
+						} catch (error) {
+							console.log(error);
+						}
+					}
+				} else if (jformat.type === 'repay') {
+					if (walletConnector.connected) {
+						console.log('repay');
+						try {
+							//check if xid, amt and camt are present
+							if (
+								jformat.values.xid &&
+								jformat.values.amt //jformat.values.camt
+							) {
+								const xid: number = Number(jformat.values.xid);
+								const repayamt: number = Number(jformat.values.amt);
+								await repay(
+									walletConnector,
+									walletConnector.accounts[0],
+									xid,
+									repayamt
+								);
+							}
+						} catch (error) {
+							console.log(error);
+						}
+					}
+				} else if (jformat.type === 'claim') {
+					if (walletConnector.connected) {
+						console.log('claim');
+						try {
+							if (jformat.values.xid) {
+								const xid: number = Number(jformat.values.xid);
+								const claimamt: number = Number(jformat.values.amt);
+								//await claim(walletConnector,walletConnector.accounts[0],xid,claimamt);
+							}
+						} catch (error) {
+							console.log(error);
+						}
+					}
+				}
+			}
+		} catch (error) {}
 	});
 	ws.on('close', function close() {
 		console.log('disconnected');
@@ -278,9 +629,9 @@ app.get('/', async (req: Request, res: Response, next: NextFunction) => {
 });
 app.get('/ping', async (req: Request, res: Response, next: NextFunction) => {
 	try {
-		const pingRes = await signATC();
+		//const pingRes = await signATC();
 
-		res.status(200).send(pingRes);
+		res.status(200).send('pingRes');
 	} catch (error) {
 		next(error);
 	}
