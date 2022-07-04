@@ -28,6 +28,7 @@
 		"dotenv": "^16.0.1",
 		"express": "^4.18.1",
 		"ipfs-http-client": "56.0.3",
+		"js-sha512": "^0.8.0",
 		"node-fetch": "*",
 		"tslib": "^2.4.0",
 		"ws": "^8.7.0"

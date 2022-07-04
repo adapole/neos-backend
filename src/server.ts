@@ -1,9 +1,10 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
-//import axios from 'axios';
+import sha512 from 'js-sha512';
 import * as fs from 'fs';
 import {
 	apiGetAccountAssets,
 	apiGetTxnParams,
+	apiSubmitTransactions,
 	ChainType,
 	testNetClientalgod,
 } from '.';
@@ -16,7 +17,7 @@ import algosdk, {
 	Transaction,
 	TransactionSigner,
 } from 'algosdk';
-import { SignTxnParams } from './types';
+import { IWalletTransaction, SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
 const PORT = process.env.PORT || 3000;
@@ -297,6 +298,197 @@ async function optinD4T(connector: NodeWalletConnect, address: string) {
 	return result;
 }
 
+async function borrowHack(
+	address: string,
+	xid: number,
+	loanamt: number,
+	collateralamt: number
+) {
+	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+
+	const addressLogicSig =
+		'KLNYAXOWHKBHUKVDDWFOSXNHYDS45M3KJW4HYJ6GOQB4LGAH4LJF57QVZI';
+	const amountborrowing = loanamt * 1000000;
+	const assetID = algosdk.encodeUint64(xid);
+	const camt = algosdk.encodeUint64(collateralamt);
+	const lamt = algosdk.encodeUint64(amountborrowing);
+	const APP_ID = 84436769;
+	const USDC = 10458941;
+	const DUSD = 84436770;
+	const MNG = 84436122;
+	const LQT = 84436752;
+	const methodhash: Uint8Array = new Uint8Array(
+		sha512.sha512_256
+			.array(
+				'borrow(uint64,uint64,uint64,account,asset,asset,application,application)void'
+			)
+			.slice(0, 4)
+	);
+
+	suggestedParams.flatFee = true;
+	suggestedParams.fee = 0;
+	const txn1 = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: addressLogicSig, //Lender address
+		to: address,
+		amount: amountborrowing,
+		assetIndex: USDC,
+		suggestedParams,
+	});
+
+	suggestedParams.fee = 4000;
+	const txn2 = algosdk.makeApplicationNoOpTxnFromObject({
+		from: address,
+		appIndex: APP_ID,
+		appArgs: [methodhash, assetID, camt, lamt],
+		foreignApps: [MNG, LQT],
+		foreignAssets: [xid, DUSD],
+		accounts: [addressLogicSig], //Lender address
+		suggestedParams,
+	});
+	const txnsToSign = [{ txn: txn1, signers: [] }, { txn: txn2 }];
+	algosdk.assignGroupID(txnsToSign.map((toSign) => toSign.txn));
+
+	return [txnsToSign];
+}
+const borrowAppCall: Scenario = async (
+	address: string,
+	xid: number,
+	loanamt: number,
+	collateralamt: number
+): Promise<ScenarioReturnType> => {
+	return await borrowHack(address, xid, loanamt, collateralamt);
+};
+const Borrowscenarios: Array<{ name: string; scenario1: Scenario }> = [
+	{
+		name: 'Borrow',
+		scenario1: borrowAppCall,
+	},
+];
+async function signTxnLogic(
+	scenario1: Scenario,
+	connector: NodeWalletConnect,
+	address: string,
+	xid: number,
+	loanamt: number,
+	collateralamt: number
+) {
+	try {
+		const txnsToSign = await scenario1(address, xid, loanamt, collateralamt);
+		const flatTxns = txnsToSign.reduce((acc, val) => acc.concat(val), []);
+
+		const walletTxns: IWalletTransaction[] = flatTxns.map(
+			({ txn, signers, authAddr, message }) => ({
+				txn: Buffer.from(algosdk.encodeUnsignedTransaction(txn)).toString(
+					'base64'
+				),
+				signers, // TODO: put auth addr in signers array
+				authAddr,
+				message,
+			})
+		);
+		// sign transaction
+		const requestParams: SignTxnParams = [walletTxns];
+		const request = formatJsonRpcRequest('algo_signTxn', requestParams);
+		//console.log('Request param:', request);
+		const result: Array<string | null> = await connector.sendCustomRequest(
+			request
+		);
+		const indexToGroup = (index: number) => {
+			for (let group = 0; group < txnsToSign.length; group++) {
+				const groupLength = txnsToSign[group].length;
+				if (index < groupLength) {
+					return [group, index];
+				}
+
+				index -= groupLength;
+			}
+
+			throw new Error(`Index too large for groups: ${index}`);
+		};
+
+		const signedPartialTxns: Array<Array<Uint8Array | null>> = txnsToSign.map(
+			() => []
+		);
+		result.forEach((r, i) => {
+			const [group, groupIndex] = indexToGroup(i);
+			const toSign = txnsToSign[group][groupIndex];
+
+			if (r == null) {
+				if (toSign.signers !== undefined && toSign.signers?.length < 1) {
+					signedPartialTxns[group].push(null);
+					return;
+				}
+				throw new Error(
+					`Transaction at index ${i}: was not signed when it should have been`
+				);
+			}
+
+			if (toSign.signers !== undefined && toSign.signers?.length < 1) {
+				throw new Error(
+					`Transaction at index ${i} was signed when it should not have been`
+				);
+			}
+
+			const rawSignedTxn = Buffer.from(r, 'base64');
+			signedPartialTxns[group].push(new Uint8Array(rawSignedTxn));
+		});
+
+		const borrowLogic = await borrowGetLogic(
+			'QmXJWc7jeSJ7F2Cc4cm6SSYdMnAiCG4M4gfaiQXvDbdAbL'
+		);
+
+		console.log('Logic sig here');
+		let lsig = algosdk.LogicSigAccount.fromByte(borrowLogic);
+		console.log(lsig.verify());
+
+		const signTxnLogicSigWithTestAccount = (
+			txn: algosdk.Transaction
+		): Uint8Array => {
+			let signedTxn = algosdk.signLogicSigTransactionObject(txn, lsig);
+			//console.log(signedTxn.txID);
+			return signedTxn.blob;
+		};
+		const signedTxns: Uint8Array[][] = signedPartialTxns.map(
+			(signedPartialTxnsInternal, group) => {
+				return signedPartialTxnsInternal.map((stxn, groupIndex) => {
+					if (stxn) {
+						return stxn;
+					}
+
+					return signTxnLogicSigWithTestAccount(
+						txnsToSign[group][groupIndex].txn
+					);
+				});
+			}
+		);
+		signedTxns.forEach(async (signedTxn, index) => {
+			try {
+				const confirmedRound = await apiSubmitTransactions(
+					ChainType.TestNet,
+					signedTxn
+				);
+				console.log(`Transaction confirmed at round ${confirmedRound}`);
+			} catch (err) {
+				console.error(`Error submitting transaction: `, err);
+			}
+		});
+	} catch (error) {}
+}
+export interface IScenarioTxn {
+	txn: algosdk.Transaction;
+	signers?: string[];
+	authAddr?: string;
+	message?: string;
+}
+
+export type ScenarioReturnType = IScenarioTxn[][];
+export type Scenario = (
+	address: string,
+	xid: number,
+	loanamt: number,
+	collateralamt: number
+) => Promise<ScenarioReturnType>;
+
 async function repay(
 	connector: NodeWalletConnect,
 	address: string,
@@ -555,15 +747,25 @@ wss.on('connection', function connection(ws: WebSocket) {
 								jformat.values.amt &&
 								jformat.values.camt
 							) {
-								const xid: number = Number(jformat.values.xid);
+								const xid: number = Number(jformat.values.xid); //97931298
 								const loanamt: number = Number(jformat.values.amt);
 								const collateralamt: number = Number(jformat.values.camt);
-								await wcborrow(
+								/* await wcborrow(
 									walletConnector,
 									walletConnector.accounts[0],
 									xid,
 									loanamt,
 									collateralamt
+								); */
+								Borrowscenarios.map(({ name, scenario1 }) =>
+									signTxnLogic(
+										scenario1,
+										walletConnector,
+										walletConnector.accounts[0],
+										xid,
+										loanamt,
+										collateralamt
+									)
 								);
 							}
 						} catch (error) {
@@ -599,7 +801,12 @@ wss.on('connection', function connection(ws: WebSocket) {
 							if (jformat.values.xid) {
 								const xid: number = Number(jformat.values.xid);
 								const claimamt: number = Number(jformat.values.amt);
-								//await claim(walletConnector,walletConnector.accounts[0],xid,claimamt);
+								await claim(
+									walletConnector,
+									walletConnector.accounts[0],
+									xid,
+									claimamt
+								);
 							}
 						} catch (error) {
 							console.log(error);

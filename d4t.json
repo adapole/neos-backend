@@ -181,15 +181,15 @@
 				},
 				{
 					"name": "xids",
-					"type": "uint64[]"
+					"type": "uint64"
 				},
 				{
 					"name": "camt",
-					"type": "uint64[]"
+					"type": "uint64"
 				},
 				{
 					"name": "lamt",
-					"type": "uint64[]"
+					"type": "uint64"
 				},
 				{
 					"name": "lenders",
