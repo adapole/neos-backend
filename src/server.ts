@@ -782,7 +782,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 								jformat.values.amt //jformat.values.camt
 							) {
 								const xid: number = Number(jformat.values.xid);
-								const repayamt: number = Number(jformat.values.amt);
+								const repayamt: number = Number(jformat.values.amt) * 1000000;
 								await repay(
 									walletConnector,
 									walletConnector.accounts[0],
@@ -800,7 +800,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 						try {
 							if (jformat.values.xid) {
 								const xid: number = Number(jformat.values.xid);
-								const claimamt: number = Number(jformat.values.amt);
+								const claimamt: number = Number(jformat.values.amt) * 1000000;
 								await claim(
 									walletConnector,
 									walletConnector.accounts[0],
