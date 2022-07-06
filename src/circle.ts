@@ -1,5 +1,6 @@
 import axios from 'axios';
-export const baseUrl = 'https://defi4circle.herokuapp.com';
+import { baseUrl } from '.';
+
 export const baseUrl2 = 'https://defi4nft.vercel.app';
 
 export const checkStatus = async () => {
