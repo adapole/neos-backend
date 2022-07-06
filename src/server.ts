@@ -1,6 +1,7 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import sha512 from 'js-sha512';
 import * as fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 import {
 	apiGetAccountAssets,
 	apiGetTxnParams,
@@ -20,7 +21,7 @@ import algosdk, {
 import { IWalletTransaction, SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
-import { checkStatus, getWallets } from './circle';
+import { checkStatus, getAddress, getWallets } from './circle';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -799,7 +800,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 					if (walletConnector.connected) {
 						console.log('claim');
 						try {
-							if (jformat.values.xid) {
+							if (jformat.values.xid && jformat.values.amt) {
 								const xid: number = Number(jformat.values.xid);
 								const claimamt: number = Number(jformat.values.amt) * 1000000;
 								await claim(
@@ -816,7 +817,17 @@ wss.on('connection', function connection(ws: WebSocket) {
 				} else if (jformat.type === 'circle') {
 					if (walletConnector.connected) {
 						try {
-							ws.send('circle');
+							if (jformat.values.xid) {
+								const chain = jformat.values.xid;
+								let uuid = uuidv4();
+
+								const circle = await getAddress(
+									uuid,
+									chain.toUpperCase(),
+									walletConnector.accounts[0]
+								);
+								if (circle !== 'error') ws.send(circle);
+							}
 						} catch (error) {
 							console.log(error);
 						}
@@ -848,6 +859,20 @@ app.get('/circle', async (req: Request, res: Response, next: NextFunction) => {
 		//const pingRes = await signATC();
 		const circle = await checkStatus();
 		res.status(200).send(circle);
+	} catch (error) {
+		next(error);
+	}
+});
+app.get('/test_cb', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		let uuid = uuidv4();
+		const chain: string = req.query.chain as string;
+		const address: string = req.query.address as string;
+		const circle = await getAddress(uuid, chain, address);
+		console.log(circle);
+		if (circle !== 'error') res.status(200).send(circle);
+
+		next('next');
 	} catch (error) {
 		next(error);
 	}
