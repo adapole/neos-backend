@@ -15,6 +15,8 @@ export interface IAssetData {
 	unitName?: string;
 	url?: string;
 }
+export const baseUrl = 'https://defi4circle.herokuapp.com';
+
 const baseServer = 'https://testnet-algorand.api.purestake.io/ps2';
 const baseServerIndexer = 'https://testnet-algorand.api.purestake.io/idx2';
 const pport = '';

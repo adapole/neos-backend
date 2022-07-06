@@ -20,6 +20,7 @@ import algosdk, {
 import { IWalletTransaction, SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
+import { checkStatus, getWallets } from './circle';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -812,6 +813,14 @@ wss.on('connection', function connection(ws: WebSocket) {
 							console.log(error);
 						}
 					}
+				} else if (jformat.type === 'circle') {
+					if (walletConnector.connected) {
+						try {
+							ws.send('circle');
+						} catch (error) {
+							console.log(error);
+						}
+					}
 				}
 			}
 		} catch (error) {}
@@ -834,11 +843,11 @@ app.get('/', async (req: Request, res: Response, next: NextFunction) => {
 		next(error);
 	}
 });
-app.get('/ping', async (req: Request, res: Response, next: NextFunction) => {
+app.get('/circle', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		//const pingRes = await signATC();
-
-		res.status(200).send('pingRes');
+		const circle = await checkStatus();
+		res.status(200).send(circle);
 	} catch (error) {
 		next(error);
 	}
