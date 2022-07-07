@@ -8,6 +8,7 @@ import {
 	apiSubmitTransactions,
 	ChainType,
 	testNetClientalgod,
+	testNetClientindexer,
 } from '.';
 require('dotenv').config();
 import WebSocket from 'ws';
@@ -21,7 +22,7 @@ import algosdk, {
 import { IWalletTransaction, SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
-import { checkStatus, getAddress, getWallets } from './circle';
+import { checkStatus, getAddress } from './circle';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -304,12 +305,13 @@ async function borrowHack(
 	address: string,
 	xid: number,
 	loanamt: number,
-	collateralamt: number
+	collateralamt: number,
+	addressLogicSig: string
 ) {
 	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
 
-	const addressLogicSig =
-		'KLNYAXOWHKBHUKVDDWFOSXNHYDS45M3KJW4HYJ6GOQB4LGAH4LJF57QVZI';
+	/* const addressLogicSig =
+		'KLNYAXOWHKBHUKVDDWFOSXNHYDS45M3KJW4HYJ6GOQB4LGAH4LJF57QVZI'; */
 	const amountborrowing = loanamt * 1000000;
 	const assetID = algosdk.encodeUint64(xid);
 	const camt = algosdk.encodeUint64(collateralamt);
@@ -356,9 +358,16 @@ const borrowAppCall: Scenario = async (
 	address: string,
 	xid: number,
 	loanamt: number,
-	collateralamt: number
+	collateralamt: number,
+	addressLogicSig: string
 ): Promise<ScenarioReturnType> => {
-	return await borrowHack(address, xid, loanamt, collateralamt);
+	return await borrowHack(
+		address,
+		xid,
+		loanamt,
+		collateralamt,
+		addressLogicSig
+	);
 };
 const Borrowscenarios: Array<{ name: string; scenario1: Scenario }> = [
 	{
@@ -375,7 +384,19 @@ async function signTxnLogic(
 	collateralamt: number
 ) {
 	try {
-		const txnsToSign = await scenario1(address, xid, loanamt, collateralamt);
+		let addressLogicSig: string;
+		//'KLNYAXOWHKBHUKVDDWFOSXNHYDS45M3KJW4HYJ6GOQB4LGAH4LJF57QVZI';
+		const us = await borrowIndexer(xid, loanamt);
+		console.log(us?.buff);
+		//console.log(us?.add);
+		if (us?.add) addressLogicSig = us.add;
+		const txnsToSign = await scenario1(
+			address,
+			xid,
+			loanamt,
+			collateralamt,
+			addressLogicSig!
+		);
 		const flatTxns = txnsToSign.reduce((acc, val) => acc.concat(val), []);
 
 		const walletTxns: IWalletTransaction[] = flatTxns.map(
@@ -435,12 +456,14 @@ async function signTxnLogic(
 			signedPartialTxns[group].push(new Uint8Array(rawSignedTxn));
 		});
 
-		const borrowLogic = await borrowGetLogic(
+		let borrowLogic: Uint8Array;
+		/* let borrowLogic = await borrowGetLogic(
 			'QmXJWc7jeSJ7F2Cc4cm6SSYdMnAiCG4M4gfaiQXvDbdAbL'
-		);
+		); */
+		if (us?.buff) borrowLogic = await borrowGetLogic(us.buff);
 
-		console.log('Logic sig here');
-		let lsig = algosdk.LogicSigAccount.fromByte(borrowLogic);
+		//console.log('Logic sig here');
+		let lsig = algosdk.LogicSigAccount.fromByte(borrowLogic!);
 		console.log(lsig.verify());
 
 		const signTxnLogicSigWithTestAccount = (
@@ -488,7 +511,8 @@ export type Scenario = (
 	address: string,
 	xid: number,
 	loanamt: number,
-	collateralamt: number
+	collateralamt: number,
+	addressLogicSig: string
 ) => Promise<ScenarioReturnType>;
 
 async function repay(
@@ -501,7 +525,7 @@ async function repay(
 	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
 	const contract = await getContractAPI();
 
-	console.log(contract);
+	//console.log(contract);
 	// Utility function to return an ABIMethod by its name
 	function getMethodByName(name: string): algosdk.ABIMethod {
 		const m = contract.methods.find((mt: algosdk.ABIMethod) => {
@@ -548,17 +572,9 @@ async function repay(
 		methodArgs: [tws, xids, ramt, xids[0], MNG, LQT],
 		...commonParams,
 	});
-	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
-
-	//comp.addTransaction({ txn: pay_txn, signer: sw.getSigner() });
-
-	// This is not necessary to call but it is helpful for debugging
-	// to see what is being sent to the network
-	const g = comp.buildGroup();
-	console.log(g);
 
 	const result = await comp.execute(testNetClientalgod, 2);
-	console.log(result);
+	console.log('confirmedRound: ' + result.confirmedRound);
 
 	return result;
 }
@@ -573,7 +589,7 @@ async function claim(
 	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
 	const contract = await getContractAPI();
 
-	console.log(contract);
+	//console.log(contract);
 	// Utility function to return an ABIMethod by its name
 	function getMethodByName(name: string): algosdk.ABIMethod {
 		const m = contract.methods.find((mt: algosdk.ABIMethod) => {
@@ -621,18 +637,9 @@ async function claim(
 		methodArgs: [tws, USDC, MNG],
 		...commonParams,
 	});
-	//const pay_txn = getPayTxn(suggested, sw.getDefaultAccount());
-
-	//comp.addTransaction({ txn: pay_txn, signer: sw.getSigner() });
-
-	// This is not necessary to call but it is helpful for debugging
-	// to see what is being sent to the network
-	const g = comp.buildGroup();
-	console.log(g);
 
 	const result = await comp.execute(testNetClientalgod, 2);
-	console.log(result);
-
+	console.log('confirmedRound: ' + result.confirmedRound);
 	return result;
 }
 // create a json making function from a string input of the form:
@@ -652,6 +659,122 @@ function makeJsonFromString(str: string) {
 
 	return { type: type, values: { xid, amt, camt } };
 }
+
+const borrowIndexer = async (assetid: Number, amount: number) => {
+	const APP_ID = 84436769;
+	const USDC = 10458941;
+	const accountsArray = await testNetClientindexer
+		.searchAccounts()
+		.applicationID(APP_ID)
+		.do();
+
+	//console.log(accountsArray.accounts);
+
+	let numAccounts = accountsArray.accounts.length;
+
+	let filteredAddress = [];
+	outer: for (let i = 0; i < numAccounts; i++) {
+		let add = accountsArray.accounts[i]['address'];
+
+		let accountInfoResponse = await testNetClientindexer
+			.lookupAccountAppLocalStates(add)
+			.applicationID(APP_ID)
+			.do();
+
+		//filtering addresses by allowed amount or by liquidity provider
+		if (accountInfoResponse['apps-local-states'][0]['key-value'] != undefined) {
+			//console.log("User's local state: " + add);
+			const kv = accountInfoResponse['apps-local-states'][0]['key-value'];
+			//console.log(kv);
+			for (let n = 0; n < kv.length; n++) {
+				//kvaamt = kv.filter((kv: any) => kv[n]['key'] == 'YWFtdA==');
+				if (kv[n]['key'] == 'YWFtdA==') {
+					// Check amount allowed, then check available amount in account
+					let kyv = kv[n]['value']['uint'];
+					//console.log(kyv);
+					// Check assetId balance
+
+					const accountAssetInfo = await testNetClientalgod
+						.accountAssetInformation(add, USDC)
+						.do();
+
+					const assetBalance = accountAssetInfo['asset-holding']['amount'];
+					//console.log(assetBalance);
+					const amountborrowing = amount * 1000000;
+					if (assetBalance >= amountborrowing && kyv > amountborrowing) {
+						// If aamt is equal or greater than available balance
+						filteredAddress.push(add);
+						continue outer;
+					}
+				}
+			}
+		}
+		//console.log(filteredAddress);
+	}
+	outer: for (let i = 0; i < filteredAddress.length; i++) {
+		let add: string = filteredAddress[i];
+
+		let accountInfoResponse = await testNetClientindexer
+			.lookupAccountAppLocalStates(add)
+			.applicationID(APP_ID)
+			.do();
+
+		if (accountInfoResponse['apps-local-states'][0]['key-value'] != undefined) {
+			console.log("User's local state: " + add);
+			const kv = accountInfoResponse['apps-local-states'][0]['key-value'];
+			//console.log(kv);
+			for (let n = 0; n < kv.length; n++) {
+				// checking for lvr
+				if (kv[n]['key'] == 'bHZy') {
+					let kyv = kv[n]['value']['uint'];
+					const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+					if (suggestedParams.lastRound > kyv) {
+						const index = filteredAddress.indexOf(add);
+						filteredAddress.splice(index, 1);
+						continue outer;
+					}
+					//const a = kyv.filter((kyv: any) => suggestedParams.lastRound < kyv);
+				}
+			}
+			for (let n = 0; n < kv.length; n++) {
+				//checking for asset Id
+				if (kv[n]['key'] == 'eGlkcw==') {
+					let xid = kv[n]['value']['bytes'];
+
+					//console.log(xid);
+					let buff = Buffer.from(xid, 'base64');
+					//console.log(buff.length);
+					let values: Array<number> = [];
+					for (let n = 0; n < buff.length; n = n + 8) {
+						// Array offset, then check value
+						values.push(Number(buff.readBigUInt64BE(n)));
+					}
+					//const value = Number(buff.readBigUInt64BE(0)); //readUIntBE(0, 8)
+					//console.log(value);
+					for (const va of values) {
+						if (assetid !== va) {
+							//foundId = true;
+							const index = filteredAddress.indexOf(add);
+							filteredAddress.splice(index, 1);
+							continue outer;
+						}
+					}
+				}
+			}
+			for (let n = 0; n < kv.length; n++) {
+				//extracting address and ipfs logicsig
+				if (kv[n]['key'] == 'bHNh') {
+					let lsa = kv[n]['value']['bytes'];
+					let buff = Buffer.from(lsa, 'base64').toString('utf-8');
+
+					return { buff, add };
+					break outer;
+				}
+			}
+		}
+	}
+	//console.log(filteredAddress);
+};
 
 wss.on('connection', function connection(ws: WebSocket) {
 	console.log('connected new client');
@@ -719,6 +842,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 					}
 					walletConnector.connected = false;
 				});
+				if (walletConnector.connected) ws.send(walletConnector.accounts[0]);
 			} catch (error) {
 				console.error(error);
 			}
@@ -832,6 +956,24 @@ wss.on('connection', function connection(ws: WebSocket) {
 							console.log(error);
 						}
 					}
+				} else if (jformat.type === 'extract') {
+					if (walletConnector.connected) {
+						try {
+							if (jformat.values.xid) {
+								let index = Math.abs(Number(jformat.values.xid));
+								const assets = await apiGetAccountAssets(
+									ChainType.TestNet,
+									walletConnector.accounts[0]
+								);
+								if (assets.length < 1) index = 0;
+								const at = index % assets.length;
+								const returns = assets[at];
+								ws.send(`0|${returns.id}:${returns.name};${returns.url}`);
+							}
+						} catch (error) {
+							console.log(error);
+						}
+					}
 				}
 			}
 		} catch (error) {}
@@ -877,7 +1019,21 @@ app.get('/test_cb', async (req: Request, res: Response, next: NextFunction) => {
 		next(error);
 	}
 });
-
+app.get('/test_ex', async (req: Request, res: Response, next: NextFunction) => {
+	try {
+		let index = Math.abs(Number(req.query.id));
+		const assets = await apiGetAccountAssets(
+			ChainType.TestNet,
+			req.query.address as string
+		);
+		if (assets.length < 1) index = 0;
+		const at = index % assets.length;
+		const returns = assets[at];
+		res.send(`${returns.id}:${returns.name}:${returns.url}`);
+	} catch (error) {
+		next(error);
+	}
+});
 app.post('/ping/:id', (req: Request, res: Response, next: NextFunction) => {
 	const { id } = req.params;
 	const { pong } = req.body;
