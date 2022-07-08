@@ -12,7 +12,7 @@ import {
 } from '.';
 require('dotenv').config();
 import WebSocket from 'ws';
-import NodeWalletConnect from '@walletconnect/node';
+import WalletConnect from '@walletconnect/client';
 import { IInternalEvent } from '@walletconnect/types';
 import algosdk, {
 	OnApplicationComplete,
@@ -23,6 +23,7 @@ import { IWalletTransaction, SignTxnParams } from './types';
 import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
 import { checkStatus, getAddress } from './circle';
+import { createClient } from 'redis';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -39,7 +40,11 @@ const ipfs = create({
 	port: 5001,
 	protocol: 'https',
 });
+//const portRedis = process.env.PORT_REDIS || '6379';
+const redisClient = createClient({ url: process.env.REDIS_URL });
+redisClient.on('error', (err) => console.log('Redis Client Error', err));
 
+const DEFAULT_EXPIRATION = 3600;
 /**
  * Returns Uint8array of LogicSig from ipfs, throw error
  * @param ipfsPath hash string of ipfs path
@@ -85,7 +90,7 @@ const getAccountAssets = async (address: string, chain: ChainType) => {
 };
 async function walletConnectSigner(
 	txns: Transaction[],
-	connector: NodeWalletConnect | null,
+	connector: WalletConnect | null,
 	address: string
 ) {
 	if (!connector) {
@@ -126,7 +131,7 @@ async function walletConnectSigner(
 	});
 }
 function getSignerWC(
-	connector: NodeWalletConnect,
+	connector: WalletConnect,
 	address: string
 ): TransactionSigner {
 	return async (txnGroup: Transaction[], indexesToSign: number[]) => {
@@ -147,7 +152,7 @@ async function getContractAPI(): Promise<algosdk.ABIContract> {
 }
 
 async function wcborrow(
-	connector: NodeWalletConnect,
+	connector: WalletConnect,
 	address: string,
 	xid: number,
 	loanamt: number,
@@ -254,7 +259,7 @@ async function wcborrow(
 	return result;
 }
 
-async function optinD4T(connector: NodeWalletConnect, address: string) {
+async function optinD4T(connector: WalletConnect, address: string) {
 	const suggested = await apiGetTxnParams(ChainType.TestNet);
 	const contract = await getContractAPI();
 
@@ -377,7 +382,7 @@ const Borrowscenarios: Array<{ name: string; scenario1: Scenario }> = [
 ];
 async function signTxnLogic(
 	scenario1: Scenario,
-	connector: NodeWalletConnect,
+	connector: WalletConnect,
 	address: string,
 	xid: number,
 	loanamt: number,
@@ -516,7 +521,7 @@ export type Scenario = (
 ) => Promise<ScenarioReturnType>;
 
 async function repay(
-	connector: NodeWalletConnect,
+	connector: WalletConnect,
 	address: string,
 	xid: number,
 	repayamt: number
@@ -578,9 +583,190 @@ async function repay(
 
 	return result;
 }
+function convert(amount: number, decimals: number) {
+	return amount * Math.pow(10, decimals);
+}
+async function atomic(
+	connector: WalletConnect,
+	address: string,
+	xid: number,
+	aamt: number,
+	address2: string,
+	xid2: number,
+	aamt2: number
+) {
+	const suggestedParams = await apiGetTxnParams(ChainType.TestNet);
+	await redisClient.connect();
+	const wcStr = await redisClient.get(address2);
+	await redisClient.QUIT();
+	const wcSession = JSON.parse(wcStr!);
+	const connector2 = new WalletConnect({
+		bridge: 'https://bridge.walletconnect.org', // Required
+		clientMeta: {
+			description: 'WalletConnect for DeFi4NFT; to Neos metaverse connection',
+			url: 'https://defi4nft.herokuapp.com',
+			icons: ['https://nodejs.org/static/images/logo.svg'],
+			name: 'DeFi4NFT | Neos',
+		},
+		session: wcSession,
+	});
+	console.log(address2);
+	const signer = getSignerWC(connector, address);
+	const signer2 = getSignerWC(connector2, address2);
 
+	//const comp = new algosdk.AtomicTransactionComposer();
+	let xidj = xid;
+	if (xid === 0) xidj = 10458941;
+
+	const assetInfo = await testNetClientindexer.lookupAssetByID(xidj).do();
+	//console.log(assetInfo);
+	const decimals: number = assetInfo.asset.params['decimals'];
+	let xid2j = xid2;
+	if (xid2 === 0) xid2j = 10458941;
+
+	const assetInfo2 = await testNetClientindexer.lookupAssetByID(xid2j).do();
+	const decimals2: number = assetInfo2.asset.params['decimals'];
+
+	const ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: address,
+		to: address2,
+		amount: convert(aamt, decimals),
+		assetIndex: xid,
+		suggestedParams,
+	});
+
+	const ptxnAlgo = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+		from: address,
+		to: address2,
+		amount: convert(aamt, 6),
+		suggestedParams,
+	});
+	let tws;
+	if (xid === 0) {
+		tws = {
+			txn: ptxnAlgo,
+			signer: signer,
+		};
+	} else {
+		tws = {
+			txn: ptxn,
+			signer: signer,
+		};
+	}
+
+	const ptxn2 = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+		from: address2,
+		to: address,
+		amount: convert(aamt2, decimals2),
+		assetIndex: xid2,
+		suggestedParams,
+	});
+	const ptxn2Algo = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+		from: address2,
+		to: address,
+		amount: convert(aamt2, 6),
+		suggestedParams,
+	});
+	const tws2 = {
+		txn: ptxn2,
+		signer: signer2,
+	};
+	let txns = [ptxn, ptxn2];
+	if (xid === 0) txns = [ptxnAlgo, ptxn2];
+	if (xid2 === 0) txns = [ptxn, ptxn2Algo];
+
+	algosdk.assignGroupID(txns); //.map((toSign) => toSign)
+	// Sign transaction
+	const signed1 = await signTxn(txns, connector, address);
+	const signed2 = await signTxn(txns, connector2, address2);
+	console.log(signed1[0].blob);
+	console.log(signed2[1].blob);
+	console.log(signed1);
+
+	const sig1: SignedTxn = signed1.find(
+		(txn) => txn.blob.length !== 0
+	) as SignedTxn;
+	const sig2: SignedTxn = signed1.find(
+		(txn) => txn.blob.length !== 0
+	) as SignedTxn;
+
+	const signedTxns: Uint8Array[][] = [[sig1.blob], [sig2.blob]];
+	signedTxns.forEach(async (signedTxn, index) => {
+		try {
+			const confirmedRound = await apiSubmitTransactions(
+				ChainType.TestNet,
+				signedTxn
+			);
+			console.log(`Transaction confirmed at round ${confirmedRound}`);
+		} catch (err) {
+			console.error(`Error submitting transaction: `, err);
+		}
+	});
+	return signed1[0].txID;
+	/* 
+	comp.addTransaction(tws);
+	comp.addTransaction(tws2);
+	// This is not necessary to call but it is helpful for debugging
+	// to see what is being sent to the network
+	//const g = comp.buildGroup();
+	//console.log(g);
+	//const signuatures = comp.gatherSignatures();
+	console.log(comp.getStatus());
+	//console.log(signuatures);
+	const txgroup = comp.buildGroup();
+	console.log(txgroup);
+	console.log(comp.getStatus());
+	const signuatures = comp.gatherSignatures();
+	console.log(signuatures);
+	console.log(comp.getStatus());
+	const txids = comp.submit(testNetClientalgod);
+	console.log(txids);
+	console.log(comp.getStatus());
+	return txids;
+ */
+	/* const result = await comp.execute(testNetClientalgod, 2);
+	console.log(result.confirmedRound);
+
+	return result; */
+}
+async function signTxn(
+	txns: Transaction[],
+	connector: WalletConnect,
+	address: string
+): Promise<SignedTxn[]> {
+	const txnsToSign = txns.map((txn) => {
+		const encodedTxn = Buffer.from(
+			algosdk.encodeUnsignedTransaction(txn)
+		).toString('base64');
+
+		if (algosdk.encodeAddress(txn.from.publicKey) !== address) {
+			return { txn: encodedTxn, signers: [] };
+		}
+		return { txn: encodedTxn };
+	});
+	console.log(txnsToSign);
+	const request = formatJsonRpcRequest('algo_signTxn', [txnsToSign]);
+
+	const result: string[] = await connector.sendCustomRequest(request);
+
+	return result.map((element, idx) => {
+		return element
+			? {
+					txID: txns[idx].txID(),
+					blob: new Uint8Array(Buffer.from(element, 'base64')),
+			  }
+			: {
+					txID: txns[idx].txID(),
+					blob: new Uint8Array(),
+			  };
+	});
+}
+export interface SignedTxn {
+	txID: string;
+	blob: Uint8Array;
+}
 async function claim(
-	connector: NodeWalletConnect,
+	connector: WalletConnect,
 	address: string,
 	xid: number,
 	claimamt: number
@@ -655,6 +841,18 @@ function makeJsonFromString(str: string) {
 	//if(arr.length > 3) {}
 	if (type === 'borrow') {
 		camt = arr[3];
+	} else if (type === 'atomic') {
+		return {
+			type: type,
+			values: {
+				address: arr[1],
+				xid: arr[2],
+				aamt: arr[3],
+				address2: arr[4],
+				xid2: arr[5],
+				aamt2: arr[6],
+			},
+		};
 	}
 
 	return { type: type, values: { xid, amt, camt } };
@@ -776,25 +974,21 @@ const borrowIndexer = async (assetid: Number, amount: number) => {
 	//console.log(filteredAddress);
 };
 
-wss.on('connection', function connection(ws: WebSocket) {
+wss.on('connection', async function connection(ws: WebSocket) {
 	console.log('connected new client');
-	//ws.send('Welcome new dude!');
-	const walletConnector = new NodeWalletConnect(
-		{
-			bridge: 'https://bridge.walletconnect.org', // Required
+	const walletConnector = new WalletConnect({
+		bridge: 'https://bridge.walletconnect.org', // Required
+		clientMeta: {
+			description: 'WalletConnect for DeFi4NFT; to Neos metaverse connection',
+			url: 'https://defi4nft.herokuapp.com',
+			icons: ['https://nodejs.org/static/images/logo.svg'],
+			name: 'DeFi4NFT | Neos',
 		},
-		{
-			clientMeta: {
-				description: 'WalletConnect for DeFi4NFT; to Neos metaverse connection',
-				url: 'https://defi4nft.herokuapp.com',
-				icons: ['https://nodejs.org/static/images/logo.svg'],
-				name: 'DeFi4NFT | Neos',
-			},
-		}
-	);
+	});
 
 	ws.on('message', async function incoming(message: string) {
 		const msg = message.toString();
+
 		if (msg === 'i') {
 		} else if (msg === 'wc') {
 			try {
@@ -809,7 +1003,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 					});
 				}
 				// Subscribe to connection events
-				walletConnector.on('connect', (error, payload) => {
+				walletConnector.on('connect', async (error, payload) => {
 					if (error) {
 						throw error;
 					}
@@ -818,7 +1012,14 @@ wss.on('connection', function connection(ws: WebSocket) {
 					const { accounts } = payload.params[0];
 					const address = accounts[0];
 					console.log(`onConnect: ${address}`);
+					await redisClient.connect();
+					await redisClient.setEx(
+						address,
+						DEFAULT_EXPIRATION,
+						JSON.stringify(walletConnector.session)
+					);
 					ws.send(address);
+					await redisClient.QUIT();
 				});
 
 				walletConnector.on('session_update', (error, payload) => {
@@ -846,6 +1047,11 @@ wss.on('connection', function connection(ws: WebSocket) {
 			} catch (error) {
 				console.error(error);
 			}
+		} else if (msg === 'address') {
+			if (walletConnector.connected) {
+				console.log('Address');
+				ws.send(walletConnector.accounts[0]);
+			}
 		} else if (msg === 'optin') {
 			if (walletConnector.connected) {
 				console.log('optin');
@@ -860,7 +1066,7 @@ wss.on('connection', function connection(ws: WebSocket) {
 			ws.close();
 		}
 		try {
-			if (msg !== 'i' && msg !== 'wc') {
+			if (msg !== 'i' && msg !== 'wc' && msg !== 'address') {
 				const jformat = makeJsonFromString(msg);
 				console.log(jformat);
 				if (jformat.type === 'borrow') {
@@ -974,6 +1180,60 @@ wss.on('connection', function connection(ws: WebSocket) {
 							console.log(error);
 						}
 					}
+				} else if (jformat.type === 'atomic') {
+					if (walletConnector.connected) {
+						console.log('atomic');
+						try {
+							if (
+								jformat.values.xid &&
+								jformat.values.aamt &&
+								jformat.values.address2 &&
+								jformat.values.xid2 &&
+								jformat.values.aamt2
+							) {
+								const xid: number = Number(jformat.values.xid);
+								const aamt: number = Number(jformat.values.aamt);
+								const address2: string = jformat.values.address2;
+								const xid2: number = Number(jformat.values.xid2);
+								const aamt2: number = Number(jformat.values.aamt2);
+								await atomic(
+									walletConnector,
+									walletConnector.accounts[0],
+									xid,
+									aamt,
+									address2,
+									xid2,
+									aamt2
+								);
+							}
+							/* wss.clients.forEach(async function each(client) {
+						
+						if (client !== ws && client.readyState === WebSocket.OPEN) {
+							console.log(walletConnector.session);
+							console.log(walletConnector.peerMeta);
+						}
+					}); */
+						} catch (error) {
+							console.log(error);
+						}
+					}
+					let xid = 0;
+					let j = xid;
+					console.log('Herer');
+					if (xid === 0) {
+						j = 97927840;
+					} else {
+						j = 97931298;
+					}
+					try {
+						//const assetInfo2 = await testNetClientindexer.lookupAssetByID(j).do();
+						const decimals2 = await testNetClientalgod.getAssetByID(j).do();
+						console.log('Here never');
+						console.log(decimals2);
+						//console.log(assetInfo2);
+					} catch (error) {
+						console.log(error);
+					}
 				}
 			}
 		} catch (error) {}
@@ -983,6 +1243,9 @@ wss.on('connection', function connection(ws: WebSocket) {
 	});
 });
 
+wss.on('close', function close() {
+	console.log('disconnected wss');
+});
 app.get('/', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		//const { data } = await axios.get(`https://api.chucknorris.io/jokes/random`);

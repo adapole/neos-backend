@@ -21,7 +21,7 @@
 	"license": "ISC",
 	"dependencies": {
 		"@json-rpc-tools/utils": "^1.7.6",
-		"@walletconnect/node": "^1.0.0",
+		"@walletconnect/client": "^1.7.8",
 		"@walletconnect/types": "^1.7.8",
 		"algosdk": "^1.17.0",
 		"axios": "^0.27.2",
@@ -30,6 +30,7 @@
 		"ipfs-http-client": "56.0.3",
 		"js-sha512": "^0.8.0",
 		"node-fetch": "*",
+		"redis": "^4.2.0",
 		"tslib": "^2.4.0",
 		"uuid": "^8.3.2",
 		"ws": "^8.7.0"
