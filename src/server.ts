@@ -1181,7 +1181,7 @@ wss.on('connection', async function connection(ws: WebSocket) {
 								if (assets.length < 1) index = 0;
 								const at = index % assets.length;
 								const returns = assets[at];
-								ws.send(`0|${returns.id}:${returns.name};${returns.url}`);
+								ws.send(`0|${returns.id}:${returns.unitName};${returns.url}`);
 							}
 						} catch (error) {
 							console.log(error);
