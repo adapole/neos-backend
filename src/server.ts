@@ -1019,14 +1019,14 @@ wss.on('connection', async function connection(ws: WebSocket) {
 					const { accounts } = payload.params[0];
 					const address = accounts[0];
 					console.log(`onConnect: ${address}`);
-					await redisClient.connect();
+					/* await redisClient.connect();
 					await redisClient.setEx(
 						address,
 						DEFAULT_EXPIRATION,
 						JSON.stringify(walletConnector.session)
 					);
+					await redisClient.QUIT(); */
 					ws.send(address);
-					await redisClient.QUIT();
 				});
 
 				walletConnector.on('session_update', (error, payload) => {
@@ -1299,7 +1299,7 @@ app.get('/test_ex', async (req: Request, res: Response, next: NextFunction) => {
 		if (assets.length < 1) index = 0;
 		const at = index % assets.length;
 		const returns = assets[at];
-		res.send(`${returns.id}:${returns.name}:${returns.url}`);
+		res.send(`${returns.id}:${returns.unitName}:${returns.url}`);
 	} catch (error) {
 		next(error);
 	}
