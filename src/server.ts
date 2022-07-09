@@ -600,6 +600,7 @@ async function atomic(
 	const wcStr = await redisClient.get(address2);
 	await redisClient.QUIT();
 	const wcSession = JSON.parse(wcStr!);
+	//console.log(wcSession.bridge);
 	const connector2 = new WalletConnect({
 		bridge: 'https://bridge.walletconnect.org', // Required
 		clientMeta: {
@@ -610,87 +611,119 @@ async function atomic(
 		},
 		session: wcSession,
 	});
-	console.log(address2);
-	const signer = getSignerWC(connector, address);
-	const signer2 = getSignerWC(connector2, address2);
+	if (!connector2.connected) return console.log('NOT CONNECTED');
+	//console.log(address2);
+	/* const signer = getSignerWC(connector, address);
+	const signer2 = getSignerWC(connector2, address2); */
 
 	//const comp = new algosdk.AtomicTransactionComposer();
-	let xidj = xid;
-	if (xid === 0) xidj = 10458941;
 
-	const assetInfo = await testNetClientindexer.lookupAssetByID(xidj).do();
+	let decimals = 6;
+	if (xid !== 0)
+		decimals = await testNetClientindexer
+			.lookupAssetByID(xid)
+			.do()
+			.then((res) => {
+				return res.asset.params['decimals'];
+			})
+			.catch((err) => {
+				console.log(err);
+				decimals = 6;
+			});
 	//console.log(assetInfo);
-	const decimals: number = assetInfo.asset.params['decimals'];
-	let xid2j = xid2;
-	if (xid2 === 0) xid2j = 10458941;
+	//const decimal: number = assetInfo.asset.params['decimals'];
+	let decimals2 = 6;
+	if (xid !== 0)
+		decimals2 = await testNetClientindexer
+			.lookupAssetByID(xid2)
+			.do()
+			.then((res) => {
+				return res.asset.params['decimals'];
+			})
+			.catch((err) => {
+				console.log(err);
+				decimals2 = 6;
+			});
 
-	const assetInfo2 = await testNetClientindexer.lookupAssetByID(xid2j).do();
-	const decimals2: number = assetInfo2.asset.params['decimals'];
+	const amt1 = convert(aamt, decimals);
+	const amt2 = convert(aamt2, decimals2);
 
-	const ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+	let ptxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
 		from: address,
 		to: address2,
-		amount: convert(aamt, decimals),
-		assetIndex: xid,
+		amount: amt1,
 		suggestedParams,
 	});
-
-	const ptxnAlgo = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-		from: address,
-		to: address2,
-		amount: convert(aamt, 6),
-		suggestedParams,
-	});
-	let tws;
-	if (xid === 0) {
-		tws = {
-			txn: ptxnAlgo,
-			signer: signer,
-		};
-	} else {
-		tws = {
-			txn: ptxn,
-			signer: signer,
-		};
+	if (xid !== 0) {
+		ptxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+			from: address,
+			to: address2,
+			amount: amt1,
+			assetIndex: xid,
+			suggestedParams,
+		});
 	}
 
-	const ptxn2 = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+	let ptxn2 = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
 		from: address2,
 		to: address,
-		amount: convert(aamt2, decimals2),
-		assetIndex: xid2,
+		amount: amt2,
 		suggestedParams,
 	});
-	const ptxn2Algo = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-		from: address2,
-		to: address,
-		amount: convert(aamt2, 6),
-		suggestedParams,
-	});
-	const tws2 = {
-		txn: ptxn2,
-		signer: signer2,
-	};
-	let txns = [ptxn, ptxn2];
-	if (xid === 0) txns = [ptxnAlgo, ptxn2];
-	if (xid2 === 0) txns = [ptxn, ptxn2Algo];
+	if (xid2 !== 0) {
+		ptxn2 = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+			from: address2,
+			to: address,
+			amount: amt2,
+			assetIndex: xid2,
+			suggestedParams,
+		});
+	}
 
-	algosdk.assignGroupID(txns); //.map((toSign) => toSign)
+	let txns = [ptxn, ptxn2];
+	//console.log(txns);
+	// Group both transactions
+	let txgroup = algosdk.assignGroupID(txns);
+	//algosdk.assignGroupID(txns); //.map((toSign) => toSign)
+	//console.log(txns);
 	// Sign transaction
 	const signed1 = await signTxn(txns, connector, address);
 	const signed2 = await signTxn(txns, connector2, address2);
-	console.log(signed1[0].blob);
-	console.log(signed2[1].blob);
-	console.log(signed1);
+
+	//console.log(signed1);
 
 	const sig1: SignedTxn = signed1.find(
 		(txn) => txn.blob.length !== 0
 	) as SignedTxn;
-	const sig2: SignedTxn = signed1.find(
+	const sig2: SignedTxn = signed2.find(
 		(txn) => txn.blob.length !== 0
 	) as SignedTxn;
+	console.log(sig1.txID);
+	console.log(sig2.txID);
+	try {
+		let tx = await testNetClientalgod
+			.sendRawTransaction([sig1.blob, sig2.blob])
+			.do();
+		console.log('Transaction : ' + tx.txId);
+		// Wait for transaction to be confirmed
+		const confirmedTxn = await algosdk.waitForConfirmation(
+			testNetClientalgod,
+			tx.txId,
+			4
+		);
+		//Get the completed Transaction
+		console.log(
+			'Transaction ' +
+				tx.txId +
+				' confirmed in round ' +
+				confirmedTxn['confirmed-round']
+		);
+		return confirmedTxn['confirmed-round'];
+	} catch (error) {
+		console.log(error);
+	}
 
-	const signedTxns: Uint8Array[][] = [[sig1.blob], [sig2.blob]];
+	/* const signedTxns: Uint8Array[][] = [[sig1.blob], [sig2.blob]];
 	signedTxns.forEach(async (signedTxn, index) => {
 		try {
 			const confirmedRound = await apiSubmitTransactions(
@@ -701,33 +734,7 @@ async function atomic(
 		} catch (err) {
 			console.error(`Error submitting transaction: `, err);
 		}
-	});
-	return signed1[0].txID;
-	/* 
-	comp.addTransaction(tws);
-	comp.addTransaction(tws2);
-	// This is not necessary to call but it is helpful for debugging
-	// to see what is being sent to the network
-	//const g = comp.buildGroup();
-	//console.log(g);
-	//const signuatures = comp.gatherSignatures();
-	console.log(comp.getStatus());
-	//console.log(signuatures);
-	const txgroup = comp.buildGroup();
-	console.log(txgroup);
-	console.log(comp.getStatus());
-	const signuatures = comp.gatherSignatures();
-	console.log(signuatures);
-	console.log(comp.getStatus());
-	const txids = comp.submit(testNetClientalgod);
-	console.log(txids);
-	console.log(comp.getStatus());
-	return txids;
- */
-	/* const result = await comp.execute(testNetClientalgod, 2);
-	console.log(result.confirmedRound);
-
-	return result; */
+	}); */
 }
 async function signTxn(
 	txns: Transaction[],
@@ -744,7 +751,7 @@ async function signTxn(
 		}
 		return { txn: encodedTxn };
 	});
-	console.log(txnsToSign);
+	//console.log(txnsToSign);
 	const request = formatJsonRpcRequest('algo_signTxn', [txnsToSign]);
 
 	const result: string[] = await connector.sendCustomRequest(request);
@@ -1217,7 +1224,7 @@ wss.on('connection', async function connection(ws: WebSocket) {
 							console.log(error);
 						}
 					}
-					let xid = 0;
+					/* let xid = 0;
 					let j = xid;
 					console.log('Herer');
 					if (xid === 0) {
@@ -1233,7 +1240,7 @@ wss.on('connection', async function connection(ws: WebSocket) {
 						//console.log(assetInfo2);
 					} catch (error) {
 						console.log(error);
-					}
+					} */
 				}
 			}
 		} catch (error) {}
