@@ -24,6 +24,7 @@ import { formatJsonRpcRequest } from '@json-rpc-tools/utils';
 import { create } from 'ipfs-http-client';
 import { checkStatus, getAddress } from './circle';
 import { createClient } from 'redis';
+import axios from 'axios';
 const PORT = process.env.PORT || 3000;
 
 const app: Application = express();
@@ -633,7 +634,7 @@ async function atomic(
 	//console.log(assetInfo);
 	//const decimal: number = assetInfo.asset.params['decimals'];
 	let decimals2 = 6;
-	if (xid !== 0)
+	if (xid2 !== 0)
 		decimals2 = await testNetClientindexer
 			.lookupAssetByID(xid2)
 			.do()
@@ -1181,7 +1182,28 @@ wss.on('connection', async function connection(ws: WebSocket) {
 								if (assets.length < 1) index = 0;
 								const at = index % assets.length;
 								const returns = assets[at];
-								ws.send(`0|${returns.id}:${returns.unitName};${returns.url}`);
+
+								const regex = /(ipfs:)/g;
+								if (returns.url && returns.url.match(regex)) {
+									let ipfsUrl = returns.url.split('/').pop()!.split('#')[0];
+
+									const { data } = await axios.get(
+										`https://ipfs.io/ipfs/${ipfsUrl}#x-ipfs-companion-no-redirect`
+									);
+									if (data.image) {
+										const imageIpfs = data.image.split('/').pop();
+										console.log('1|');
+										ws.send(
+											`1|${returns.id}:${returns.unitName};https://ipfs.io/ipfs/${imageIpfs}`
+										);
+									} else {
+										ws.send(
+											`0|${returns.id}:${returns.unitName};${returns.url}`
+										);
+									}
+								} else {
+									ws.send(`0|${returns.id}:${returns.unitName};${returns.url}`);
+								}
 							}
 						} catch (error) {
 							console.log(error);
@@ -1256,12 +1278,22 @@ wss.on('close', function close() {
 app.get('/', async (req: Request, res: Response, next: NextFunction) => {
 	try {
 		//const { data } = await axios.get(`https://api.chucknorris.io/jokes/random`);
-		const assets = await apiGetAccountAssets(
-			ChainType.TestNet,
-			'BORRU26OCWXDSDEVY5I64L7HW7WXIAIOC4JPNRITTZWIUQKZDPGBXLGFT4'
-		);
 
-		res.status(200).send(assets);
+		const assetInfo = await testNetClientalgod.getAssetByID(84957464).do();
+		const str = assetInfo.params.url;
+		const ipfsUrl = str.split('/').pop().split('#')[0];
+		//console.log(ipfsUrl);
+		const { data } = await axios.get(
+			`https://ipfs.io/ipfs/${ipfsUrl}#x-ipfs-companion-no-redirect`
+		);
+		if (data.image) {
+			const imageIpfs = data.image.split('/').pop();
+			const url = `https://ipfs.io/ipfs/${imageIpfs}`;
+			console.log(url);
+
+			res.status(200).send(url);
+		}
+		//res.status(200).send(assets);
 	} catch (error) {
 		next(error);
 	}
