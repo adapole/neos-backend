@@ -1472,6 +1472,16 @@ wss.on('connection', async function connection(ws: WebSocket) {
 							console.log(error);
 						}
 					}
+				} else if (jformat.type === 'address') {
+					if (walletConnector.connected) {
+						const address = walletConnector.accounts[0];
+						console.log(address);
+						try {
+							ws.send(address);
+						} catch (error) {
+							console.log(error);
+						}
+					}
 				}
 			}
 		} catch (error) {}
